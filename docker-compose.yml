@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - demucs_cache:/root/.cache/torch
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - OUTPUT_DIR=/app/output
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "43880:43880"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules   # preserve node_modules installed in the image
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  demucs_cache:

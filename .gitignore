@@ -1,0 +1,12 @@
+output/
+frontend/node_modules/
+frontend/dist/
+src-tauri/target/
+src-tauri/binaries/*.exe
+__pycache__/
+*.pyc
+.env
+backend/dist/
+backend/build/
+backend/ffmpeg.exe
+backend/ffprobe.exe

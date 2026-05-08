@@ -1,0 +1,103 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # 手動実行も可
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      # ── 準備 ────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # ── FFmpeg をバンドル用にコピー ──────────────────────────
+      - name: Install FFmpeg (Chocolatey)
+        run: |
+          choco install ffmpeg -y --no-progress
+          $ff  = (Get-Command ffmpeg).Source
+          $ffp = (Get-Command ffprobe).Source
+          Copy-Item $ff  backend\ffmpeg.exe
+          Copy-Item $ffp backend\ffprobe.exe
+        shell: pwsh
+
+      # ── Python サイドカー (backend.exe) ────────────────────
+      - name: Install Python deps (CPU PyTorch)
+        working-directory: backend
+        run: |
+          pip install pyinstaller `
+            "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0" `
+            "yt-dlp>=2024.10.0" "demucs>=4.0.1" aiofiles
+          pip install torch torchaudio `
+            --index-url https://download.pytorch.org/whl/cpu
+        shell: pwsh
+
+      - name: Build backend.exe with PyInstaller
+        working-directory: backend
+        run: |
+          pyinstaller --onefile --name backend --console `
+            --add-binary "ffmpeg.exe;." `
+            --add-binary "ffprobe.exe;." `
+            --hidden-import demucs `
+            --hidden-import demucs.pretrained `
+            --hidden-import demucs.separate `
+            --hidden-import demucs.htdemucs `
+            --hidden-import yt_dlp `
+            --hidden-import uvicorn.logging `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.h11_impl `
+            --hidden-import uvicorn.lifespan.on `
+            --collect-all demucs `
+            --collect-all omegaconf `
+            main.py
+          New-Item -ItemType Directory -Force -Path ..\src-tauri\binaries | Out-Null
+          Copy-Item dist\backend.exe `
+            ..\src-tauri\binaries\backend-x86_64-pc-windows-msvc.exe
+        shell: pwsh
+
+      # ── フロントエンド & Tauri ──────────────────────────────
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Generate app icons from app-icon.png
+        run: tauri icon app-icon.png
+
+      - name: Build frontend (Tauri mode)
+        working-directory: frontend
+        run: npm run build -- --mode tauri
+
+      - name: Build Tauri Windows installer
+        run: tauri build
+
+      # ── 成果物アップロード ──────────────────────────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-karaoke-windows-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+          retention-days: 7
